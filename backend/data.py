@@ -18,13 +18,25 @@ def main():
     num = size_of_loop(videos_on_channel= main_stats)
     videoIDS = get_videos_from_playlist(upload_id=uploadID, num= num, youtube=youtube)
     list_of_lists = fifty_elements(ids_from_videos= videoIDS)
-    stats, last_50_videos= stats_from_videos(videos_list=list_of_lists, youtube=youtube)
+    stats, last_50_videos= stats_from_videos(videos_list=list_of_lists, youtube=youtube) 
     objectOne = top_videos(df=stats)
     objectTwo = get_stats(dataf= stats)
     objectThree = charts(df = stats)
     objectFour = trend_top(df=stats)
-    print(objectOne)
-    return objectTwo
+    
+    data = {"items":{
+        "stats":objectOne,
+        "charts":objectThree,
+        "trends":objectFour,
+        "dashboard":objectTwo,
+        "channel_data": main_stats
+    }}
+    channel_name = main_stats["channel_name"].replace(" ","_")
+    stats.to_csv(f"./testdata/{channel_name}.csv")
+
+    comments_list, comments_df = get_comments(vid_id = objectOne["most_views"]["id"], youtube= youtube)
+    
+    return data
 
 
 ## This functions returns the 'Youtube' class.
@@ -186,7 +198,7 @@ def fifty_elements(ids_from_videos):
     return empty_list
 
 
-## This function returns the main stats from all the videos of a Youtube Channel
+## This function returns the main stats from all the videos of a Youtube Channel.
 def stats_from_videos(videos_list, youtube):
     """
     INPUT: List of Youtube ID's and the youtube class.
@@ -249,7 +261,7 @@ def top_videos(df):
             "commentCount" : mostViews["commentCount"].tolist()[0],
             "thumbnail" : mostViews["thumbnail"].tolist()[0],
             "link" : mostViews["link"].tolist()[0],
-            "id" mostViews["video_id"].tolist()[0]
+            "id": mostViews["video_id"].tolist()[0]
             },
         "less_views":{
             "title": lessViews["title"].tolist()[0],
@@ -260,7 +272,7 @@ def top_videos(df):
             "commentCount" : lessViews["commentCount"].tolist()[0],
             "thumbnail" : lessViews["thumbnail"].tolist()[0],
             "link" : lessViews["link"].tolist()[0],
-            "id" lessViews["video_id"].tolist()[0]
+            "id": lessViews["video_id"].tolist()[0]
             },
         "most_recent":{
             "title": mostRecent["title"].tolist()[0],
@@ -271,7 +283,7 @@ def top_videos(df):
             "commentCount" : mostRecent["commentCount"].tolist()[0],
             "thumbnail" : mostRecent["thumbnail"].tolist()[0],
             "link" : mostRecent["link"].tolist()[0],
-            "id" mostRecent["video_id"].tolist()[0]
+            "id": mostRecent["video_id"].tolist()[0]
             }
     }
     return most_views
@@ -304,7 +316,6 @@ def get_stats(dataf):
     return videoStats
 
 
-
 def charts(df):
     df = df[0:50]
     charts = {
@@ -313,10 +324,11 @@ def charts(df):
         "title": df.title.to_list(),
         "link": df.link.to_list(),
         "thumbnail": df.thumbnail.to_list(),
-        "comments" : df.comments.astype("int32").to_list(),
+        "comments" : df.commentCount.astype("int32").to_list(),
         "dislikes" : df.dislikeCount.astype("int32").to_list()
     }
     return charts
+
 
 def trend_top(df):
 
@@ -325,7 +337,7 @@ def trend_top(df):
     
     for i in range(11):
         index = topVideo-5
-        empty.append(vid_stats.loc[vid_stats.index == index+i ])
+        empty.append(df.loc[df.index == index+i ])
     
     dataframe = pd.concat(empty)
 
@@ -336,8 +348,38 @@ def trend_top(df):
         "link": dataframe.link.to_list(),
         "thumbnail": dataframe.thumbnail.to_list()
     }
-
     return charts
+
+
+def get_comments(vid_id,youtube):
+    nextPageToken = None
+    comments_list=[]
+    
+    for si in range(5):
+        query= youtube.commentThreads().list(part=["snippet","replies"],
+                                                videoId=vid_id, 
+                                                maxResults=50,
+                                                pageToken= nextPageToken)
+        comments_query = query.execute()
+
+        loop = len(comments_query["items"])
+
+        for comment in range(loop):
+            comments_list.append(
+                comments_query["items"][comment]["snippet"]["topLevelComment"]["snippet"]["textOriginal"]
+            )
+
+        nextPageToken = comments_query.get("nextPageToken")
+        
+        if not nextPageToken:
+            break
+
+    comments_df = pd.DataFrame.from_dict(comments_list)
+
+    return comments_list, comments_df
+
+
+
 
 if __name__ == "__main__":
     # execute only if run as a script

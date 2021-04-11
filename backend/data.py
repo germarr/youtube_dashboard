@@ -4,6 +4,7 @@ from googleapiclient.discovery import build
 from datetime import datetime,date
 import time
 import math
+import re
 
 ## Global Variables
 api_key = "AIzaSyCyg5iPimg6ngPOLuh1uppUtdPDOLfiCBg"
@@ -13,6 +14,17 @@ def main():
     youtube = get_youtube(api_key=api_key)
     single_video_id = transform_url(url=url)
     channel_id = get_channel_id(url_id= single_video_id, youtube= youtube)
+    uploadID, main_stats = upload_id(channel_id=channel_id, youtube= youtube)
+    num = size_of_loop(videos_on_channel= main_stats)
+    videoIDS = get_videos_from_playlist(upload_id=uploadID, num= num, youtube=youtube)
+    list_of_lists = fifty_elements(ids_from_videos= videoIDS)
+    stats, last_50_videos= stats_from_videos(videos_list=list_of_lists, youtube=youtube)
+    objectOne = top_videos(df=stats)
+    objectTwo = get_stats(dataf= stats)
+    objectThree = charts(df = stats)
+    objectFour = trend_top(df=stats)
+    print(objectOne)
+    return objectTwo
 
 
 ## This functions returns the 'Youtube' class.
@@ -49,4 +61,284 @@ def get_channel_id(url_id, youtube):
     
     return channel_id
 
+## The ChannelID gives us direct access to the the main stats of the channel.
+## In addition to that, we can also get the ID of the 'Upload' Playlist
+## This playlist contains every video that the channel has ever published.
+## By having this videos, we can extract the videoID from them and get stats.
 
+def upload_id(channel_id, youtube):
+    """
+    INPUT: channelID and the youtube class.
+    OUTPUT 1: Upload Playlist ID
+    OUTPUT 2: An object with the main stats from the channel.
+    """
+    upload_query = youtube.channels().list(
+        part=["statistics", "snippet", "contentDetails"],
+        id= channel_id).execute()
+    
+    upload_id= upload_query["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    main_stats = {
+        "channel_name":upload_query["items"][0]["snippet"]["title"],
+        "country":upload_query["items"][0]["snippet"].get("country"),
+        "channel_main_stats": upload_query["items"][0]["statistics"]}
+
+    return [upload_id], main_stats
+
+## We are going to use a function called 'allIDS' to get all the videoID's from the channel.
+## We can retrieve 50 videos per API call, so we need to caluclate how many times to run it. 
+def size_of_loop(videos_on_channel):
+    """
+    INPUT: Amount of videos published by the channel.
+    OUTPUT: How many times the 'allIDS' function needs to run to get all of the videoIDS. 
+    If the channel has more than a 1,000 videos, the function returns 20. (1000/50) = 20.
+    """
+    num = 0
+    
+    videos_on_channel = int(videos_on_channel["channel_main_stats"]["videoCount"])
+
+    if videos_on_channel > 1000:
+        num = math.floor(1000/50)
+    else:
+        num = math.floor(int(videos_on_channel)/50)
+
+    if num == 0:
+        num = 1
+    
+    return num
+
+
+##  This function creates a list with all the videoIDS of a channel.
+##  By default, the function returns the last 1,000 videos of a channel.
+def get_videos_from_playlist(upload_id, num, youtube, all_videos = False):
+    """
+    INPUT: The uploadID, the youtube class, and the number of times the loop should run.
+    OUTPUT: All the video id's of the channel.
+    
+    NOTES: By default, the max amount of videos that this function can return, by default, is 1,000. 
+    If the 'all_videos' parameter is changed to 'True' the function will return every video. 
+    """
+    #This token especifies the list of videos we need.
+    nextPageToken = None
+    
+    # Name of the dictionary
+    videos=[]
+
+    if all_videos == False:
+        for i in range(num):
+            q= youtube.playlistItems().list(
+                part="contentDetails",
+                playlistId=upload_id[0],
+                maxResults=50,
+                pageToken= nextPageToken)
+
+            query = q.execute()
+            
+            for item in query["items"]:
+                videos.append(item["contentDetails"]["videoId"])
+
+            nextPageToken = query.get("nextPageToken")
+    
+    else:
+        while True:
+            q= youtube.playlistItems().list(
+                part="contentDetails",
+                playlistId=upload_id[0],
+                maxResults=50,
+                pageToken= nextPageToken)
+
+            query = q.execute()
+            
+            for item in query["items"]:
+                videos.append(item["contentDetails"]["videoId"])
+
+            nextPageToken = query.get("nextPageToken")
+
+            if not nextPageToken:
+                break
+        
+    return videos
+
+
+## This function creates a list of lists. 
+def fifty_elements(ids_from_videos):
+    """
+    INPUT: A list with all the videoIDS of a channel.
+    OUTPUT: A list that includes lists with 50 elements. 
+
+    NOTES: This output is going to be used in the 'stats_from_video' function.
+    """
+
+    first50 = list(ids_from_videos)
+    empty_list = []
+    count = len(first50)
+
+    while count > 0:
+        var1 = count - 50
+        var2 = count
+
+        if var1 < 0:
+            var1 = 0
+
+        empty_list.append(first50[var1:var2])
+
+        count -= 50
+
+    return empty_list
+
+
+## This function returns the main stats from all the videos of a Youtube Channel
+def stats_from_videos(videos_list, youtube):
+    """
+    INPUT: List of Youtube ID's and the youtube class.
+    OUTPUT 1: A dataframe with all the stats from the videos specified on the list.
+    OUTPUT 2: A dataframe with the information of the last 50 videos.
+    """
+    stats_dict = []
+
+    for i in range(len(videos_list)):
+        vid_request = youtube.videos().list(
+            part=["snippet", "statistics", "contentDetails"],
+            id=",".join(videos_list[i]))
+        b = vid_request.execute()
+
+        for si in range(len(b["items"])):
+            bstats = b["items"][si]["statistics"]
+            binfo = b["items"][si]["snippet"]
+            bid = b["items"][si]["id"]
+            bcontent = b["items"][si]["contentDetails"]
+
+            stats_dict.append({
+                "channel_id": binfo.get("channelId"),
+                "video_id": bid,
+                "publishedAt": binfo.get("publishedAt"),
+                "title": binfo["title"],
+                f"viewCount": bstats.get("viewCount"),
+                f"likeCount": bstats.get("likeCount"),
+                f"dislikeCount": bstats.get("dislikeCount"),
+                f"commentCount": bstats.get("commentCount"),
+                "duration": bcontent.get("duration"),
+                "thumbnail": binfo["thumbnails"]["medium"]["url"],
+                "link": f"https://youtu.be/{bid}",
+                "video_lang": binfo.get("defaultAudioLanguage"),
+                "categoryId": binfo.get("categoryId"),
+                "description": binfo.get("description")
+            })
+
+    vid_stats = pd.DataFrame.from_dict(stats_dict).sort_values(by="publishedAt", ascending=False)
+    vid_stats["medianViews"] = vid_stats.viewCount.median()
+    vid_stats["medianLikes"] = vid_stats.likeCount.median()
+    vid_stats["medianComments"] = vid_stats.commentCount.median()
+    vid_stats["medianDislikeCount"] = vid_stats.dislikeCount.median()
+    
+    last_50_videos = vid_stats.video_id.tolist()[0:50]
+
+    return vid_stats, last_50_videos 
+
+
+def top_videos(df):
+    mostViews= df.sort_values(by=["viewCount"], ascending=False).iloc[0:1,:]
+    lessViews = df.sort_values(by=["viewCount"]).iloc[0:1,:]
+    mostRecent = df.head(1)
+    most_views = {
+        "most_views":{
+            "title" : mostViews["title"].tolist()[0],
+            "publishedAt": mostViews["publishedAt"].tolist()[0],
+            "viewCount": mostViews["viewCount"].tolist()[0],
+            "likeCount": mostViews["likeCount"].tolist()[0],
+            "dislikeCount": mostViews["dislikeCount"].tolist()[0],
+            "commentCount" : mostViews["commentCount"].tolist()[0],
+            "thumbnail" : mostViews["thumbnail"].tolist()[0],
+            "link" : mostViews["link"].tolist()[0],
+            "id" mostViews["video_id"].tolist()[0]
+            },
+        "less_views":{
+            "title": lessViews["title"].tolist()[0],
+            "publishedAt": lessViews["publishedAt"].tolist()[0],
+            "viewCount": lessViews["viewCount"].tolist()[0],
+            "likeCount": lessViews["likeCount"].tolist()[0],
+            "dislikeCount": lessViews["dislikeCount"].tolist()[0],
+            "commentCount" : lessViews["commentCount"].tolist()[0],
+            "thumbnail" : lessViews["thumbnail"].tolist()[0],
+            "link" : lessViews["link"].tolist()[0],
+            "id" lessViews["video_id"].tolist()[0]
+            },
+        "most_recent":{
+            "title": mostRecent["title"].tolist()[0],
+            "publishedAt": mostRecent["publishedAt"].tolist()[0],
+            "viewCount": mostRecent["viewCount"].tolist()[0],
+            "likeCount": mostRecent["likeCount"].tolist()[0],
+            "dislikeCount": mostRecent["dislikeCount"].tolist()[0],
+            "commentCount" : mostRecent["commentCount"].tolist()[0],
+            "thumbnail" : mostRecent["thumbnail"].tolist()[0],
+            "link" : mostRecent["link"].tolist()[0],
+            "id" mostRecent["video_id"].tolist()[0]
+            }
+    }
+    return most_views
+
+
+def get_stats(dataf):
+    
+    hours = []
+    minutes = []
+    seconds = []
+
+    list_of = dataf.duration.to_list()
+
+    for i in range(len(list_of)):
+        minutes.append(re.findall(r"(\d+)M", list_of[i]))
+        
+        hours.append(re.findall(r"(\d+)H", list_of[i]))
+
+        seconds.append(re.findall(r"(\d+)S", list_of[i]))
+
+    totalT = ((pd.DataFrame(seconds).fillna(0).astype("int32").sum() / 60) + pd.DataFrame(minutes).fillna(0).astype("int32").sum()) / 60
+
+    videoStats = {
+        "dislikes" : dataf.dislikeCount.fillna(0).astype('int32').sum(),
+        "likes" : dataf.likeCount.fillna(0).astype('int32').sum(),
+        "comments" : dataf.commentCount.fillna(0).astype('int32').sum(),
+        "total_time" : round(totalT[0],2)
+    }
+
+    return videoStats
+
+
+
+def charts(df):
+    df = df[0:50]
+    charts = {
+        "views": df.viewCount.astype("int32").to_list(),
+        "dates" : df.publishedAt.to_list(),
+        "title": df.title.to_list(),
+        "link": df.link.to_list(),
+        "thumbnail": df.thumbnail.to_list(),
+        "comments" : df.comments.astype("int32").to_list(),
+        "dislikes" : df.dislikeCount.astype("int32").to_list()
+    }
+    return charts
+
+def trend_top(df):
+
+    empty = []
+    topVideo = int(df.sort_values(by=["viewCount"], ascending=False).iloc[0:1,:].index[0])
+    
+    for i in range(11):
+        index = topVideo-5
+        empty.append(vid_stats.loc[vid_stats.index == index+i ])
+    
+    dataframe = pd.concat(empty)
+
+    charts = {
+        "views": dataframe.viewCount.astype("int32").to_list(),
+        "dates" : dataframe.publishedAt.to_list(),
+        "title": dataframe.title.to_list(),
+        "link": dataframe.link.to_list(),
+        "thumbnail": dataframe.thumbnail.to_list()
+    }
+
+    return charts
+
+if __name__ == "__main__":
+    # execute only if run as a script
+    main()

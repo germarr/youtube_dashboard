@@ -5,37 +5,42 @@ from datetime import datetime,date
 import time
 import math
 import re
+from comments import comments_analysis
+
 
 ## Global Variables
 api_key = "AIzaSyCyg5iPimg6ngPOLuh1uppUtdPDOLfiCBg"
-url ="https://www.youtube.com/watch?v=xrUgURj-vFk"
 
-def main():
+
+def main(mainURL="https://www.youtube.com/watch?v=xrUgURj-vFk"):
+    url = mainURL
     youtube = get_youtube(api_key=api_key)
     single_video_id = transform_url(url=url)
     channel_id = get_channel_id(url_id= single_video_id, youtube= youtube)
     uploadID, main_stats = upload_id(channel_id=channel_id, youtube= youtube)
-    num = size_of_loop(videos_on_channel= main_stats)
-    videoIDS = get_videos_from_playlist(upload_id=uploadID, num= num, youtube=youtube)
+    num = size_of_loop(videos_on_channel= main_stats, number_of_videos=1000)
+    videoIDS = get_videos_from_playlist(upload_id=uploadID, num= num, youtube=youtube, all_videos = False)
     list_of_lists = fifty_elements(ids_from_videos= videoIDS)
-    stats, last_50_videos= stats_from_videos(videos_list=list_of_lists, youtube=youtube) 
+    stats= stats_from_videos(videos_list=list_of_lists, youtube=youtube) 
     objectOne = top_videos(df=stats)
     objectTwo = get_stats(dataf= stats)
     objectThree = charts(df = stats)
     objectFour = trend_top(df=stats)
-    
-    data = {"items":{
-        "stats":objectOne,
-        "charts":objectThree,
-        "trends":objectFour,
-        "dashboard":objectTwo,
-        "channel_data": main_stats
-    }}
+    comments = comments_analysis(videoID= objectOne["most_views"]["id"])
+
+    data = {
+        "0":objectOne,
+        "1": objectTwo,
+        "2": objectThree,
+        "3": objectFour,
+        "4": stats.head(50).fillna(0).transpose().to_dict(),
+        "5": main_stats,
+        "6": comments
+    }
+
     channel_name = main_stats["channel_name"].replace(" ","_")
     stats.to_csv(f"./testdata/{channel_name}.csv")
 
-    comments_list, comments_df = get_comments(vid_id = objectOne["most_views"]["id"], youtube= youtube)
-    
     return data
 
 
@@ -98,7 +103,7 @@ def upload_id(channel_id, youtube):
 
 ## We are going to use a function called 'allIDS' to get all the videoID's from the channel.
 ## We can retrieve 50 videos per API call, so we need to caluclate how many times to run it. 
-def size_of_loop(videos_on_channel):
+def size_of_loop(videos_on_channel, number_of_videos=1000):
     """
     INPUT: Amount of videos published by the channel.
     OUTPUT: How many times the 'allIDS' function needs to run to get all of the videoIDS. 
@@ -108,8 +113,8 @@ def size_of_loop(videos_on_channel):
     
     videos_on_channel = int(videos_on_channel["channel_main_stats"]["videoCount"])
 
-    if videos_on_channel > 1000:
-        num = math.floor(1000/50)
+    if videos_on_channel > number_of_videos:
+        num = math.floor(number_of_videos/50)
     else:
         num = math.floor(int(videos_on_channel)/50)
 
@@ -218,7 +223,33 @@ def stats_from_videos(videos_list, youtube):
             binfo = b["items"][si]["snippet"]
             bid = b["items"][si]["id"]
             bcontent = b["items"][si]["contentDetails"]
+            time = bcontent.get("duration")
+            
+            hours = re.findall(r"(\d+)H", time)
+            seconds = re.findall(r"(\d+)S", time)
 
+            try:
+                minutes = re.findall(r"(\d+)M", time)
+            except TypeError:
+                minutes = 0
+
+            if not hours:
+                hours = 0
+            else:
+                hours = int(re.findall(r"(\d+)H", time)[0])*60
+
+            if not minutes:
+                minutes = 0
+            else:
+                minutes = int(re.findall(r"(\d+)M", time)[0])
+
+            if not seconds:
+                seconds = 0
+            else:
+                seconds = int(re.findall(r"(\d+)S", time)[0])/60
+
+            totalT = round(seconds + hours + minutes,2)
+            
             stats_dict.append({
                 "channel_id": binfo.get("channelId"),
                 "video_id": bid,
@@ -228,7 +259,7 @@ def stats_from_videos(videos_list, youtube):
                 f"likeCount": bstats.get("likeCount"),
                 f"dislikeCount": bstats.get("dislikeCount"),
                 f"commentCount": bstats.get("commentCount"),
-                "duration": bcontent.get("duration"),
+                "duration": totalT,
                 "thumbnail": binfo["thumbnails"]["medium"]["url"],
                 "link": f"https://youtu.be/{bid}",
                 "video_lang": binfo.get("defaultAudioLanguage"),
@@ -242,9 +273,8 @@ def stats_from_videos(videos_list, youtube):
     vid_stats["medianComments"] = vid_stats.commentCount.median()
     vid_stats["medianDislikeCount"] = vid_stats.dislikeCount.median()
     
-    last_50_videos = vid_stats.video_id.tolist()[0:50]
 
-    return vid_stats, last_50_videos 
+    return vid_stats 
 
 
 def top_videos(df):
@@ -290,27 +320,12 @@ def top_videos(df):
 
 
 def get_stats(dataf):
-    
-    hours = []
-    minutes = []
-    seconds = []
-
-    list_of = dataf.duration.to_list()
-
-    for i in range(len(list_of)):
-        minutes.append(re.findall(r"(\d+)M", list_of[i]))
-        
-        hours.append(re.findall(r"(\d+)H", list_of[i]))
-
-        seconds.append(re.findall(r"(\d+)S", list_of[i]))
-
-    totalT = ((pd.DataFrame(seconds).fillna(0).astype("int32").sum() / 60) + pd.DataFrame(minutes).fillna(0).astype("int32").sum()) / 60
 
     videoStats = {
-        "dislikes" : dataf.dislikeCount.fillna(0).astype('int32').sum(),
-        "likes" : dataf.likeCount.fillna(0).astype('int32').sum(),
-        "comments" : dataf.commentCount.fillna(0).astype('int32').sum(),
-        "total_time" : round(totalT[0],2)
+        "dislikes" : int(dataf.dislikeCount.fillna(0).astype('int32').sum()),
+        "likes" : int(dataf.likeCount.fillna(0).astype('int32').sum()),
+        "comments" : int(dataf.commentCount.fillna(0).astype('int32').sum()),
+        "total_time" : int(dataf.duration.fillna(0).astype('int32').sum())/60,
     }
 
     return videoStats
@@ -349,36 +364,6 @@ def trend_top(df):
         "thumbnail": dataframe.thumbnail.to_list()
     }
     return charts
-
-
-def get_comments(vid_id,youtube):
-    nextPageToken = None
-    comments_list=[]
-    
-    for si in range(5):
-        query= youtube.commentThreads().list(part=["snippet","replies"],
-                                                videoId=vid_id, 
-                                                maxResults=50,
-                                                pageToken= nextPageToken)
-        comments_query = query.execute()
-
-        loop = len(comments_query["items"])
-
-        for comment in range(loop):
-            comments_list.append(
-                comments_query["items"][comment]["snippet"]["topLevelComment"]["snippet"]["textOriginal"]
-            )
-
-        nextPageToken = comments_query.get("nextPageToken")
-        
-        if not nextPageToken:
-            break
-
-    comments_df = pd.DataFrame.from_dict(comments_list)
-
-    return comments_list, comments_df
-
-
 
 
 if __name__ == "__main__":
